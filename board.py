@@ -1,6 +1,3 @@
-# xiangqi_v3_custom.py
-# ✅ 使用 chess(1).rar 的 GIF 命名规则与选中态图
-
 import pygame
 import sys
 import json
@@ -132,8 +129,18 @@ def confirm_restart():
 
 
 def restart_game():
-    global pieces, history, selected, current_turn
-    pieces = [dict(name=n, x=x, y=y, color=c) for n, x, y, c in initial_pieces]
+    global pieces, history, selected, current_turn, player_side, ai_think_time, ai_engine
+    # player_side = select_mode()
+    if player_side is not None:
+        ai_think_time = select_ai_level()
+        from ucci import UCCIEngine
+
+        ai_engine = UCCIEngine("G:/git/Pikafish/pica/eleeye.exe")
+    pieces = (
+        [dict(name=n, x=x, y=y, color=c) for n, x, y, c in initial_pieces]
+        if player_side != RED
+        else [dict(name=n, x=x, y=9 - y, color=c) for n, x, y, c in initial_pieces]
+    )
     history.clear()
     selected = None
     current_turn = RED
@@ -265,10 +272,16 @@ def is_valid_move(piece, tx, ty):
     name, x, y = piece["name"], piece["x"], piece["y"]
 
     if name in ["兵", "卒"]:
+        if player_side == RED:
+            return dx == 0 and dy == 1 or y > 4 and abs_dx == 1 and dy == 0
         forward = -1 if piece["color"] == RED else 1
-        if (piece["color"] == RED and y < 5) or (piece["color"] == BLACK and y > 4):
-            return (abs_dx == 1 and dy == 0) or (dx == 0 and dy == forward)
-        return dx == 0 and dy == forward
+        return (
+            dx == 0
+            and dy == forward
+            or (y > 4 if piece["color"] == BLACK else y < 5)
+            and abs_dx == 1
+            and dy == 0
+        )
 
     if name in ["帥", "將"]:
         if not (
@@ -335,6 +348,56 @@ def undo():
         current_turn = RED if current_turn == BLACK else BLACK
         SOUND_UNDO.play()
 
+def show_control_panel():
+    global red_control, black_control, ai_think_time
+
+    font = pygame.font.SysFont("SimHei", 24)
+    clock = pygame.time.Clock()
+
+    red_control = "人"
+    black_control = "AI"
+    ai_think_time = 2000
+
+    panel_done = False
+    while not panel_done:
+        SCREEN.fill(WHITE)
+        # 标题
+        title = font.render("设置", True, BLACK)
+        SCREEN.blit(title, (WIDTH // 2 - title.get_width() // 2, 50))
+
+        # 红方控制方式
+        txt_red = font.render(f"红方: {red_control} (按 R 切换)", True, RED)
+        SCREEN.blit(txt_red, (60, 120))
+
+        # 黑方控制方式
+        txt_black = font.render(f"黑方: {black_control} (按 B 切换)", True, BLACK)
+        SCREEN.blit(txt_black, (60, 180))
+
+        # AI 时间
+        txt_time = font.render(f"AI 思考时间: {ai_think_time}ms (+/-键调整)", True, BLACK)
+        SCREEN.blit(txt_time, (60, 240))
+
+        # 确认
+        txt_ok = font.render("按 Enter 开始游戏", True, (0, 100, 0))
+        SCREEN.blit(txt_ok, (60, 300))
+
+        pygame.display.flip()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit(); sys.exit()
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_r:
+                    red_control = "AI" if red_control == "人" else "人"
+                elif event.key == pygame.K_b:
+                    black_control = "AI" if black_control == "人" else "人"
+                elif event.key == pygame.K_PLUS or event.key == pygame.K_KP_PLUS:
+                    ai_think_time += 500
+                elif event.key == pygame.K_MINUS or event.key == pygame.K_KP_MINUS:
+                    ai_think_time = max(500, ai_think_time - 500)
+                elif event.key == pygame.K_RETURN:
+                    panel_done = True
+        clock.tick(30)
 
 def load_replay(filename="replay.txt"):
     global pieces, current_turn, selected
@@ -354,16 +417,35 @@ def load_replay(filename="replay.txt"):
     except Exception as e:
         print("棋谱导入失败：", e)
 
+from controlpanel import launch_control_panel
 
 def main_loop():
-    global selected, current_turn, blink
+    global selected, current_turn, blink,SCREEN
     while True:
         draw_board()
         draw_legal_moves()
         draw_pieces()
         pygame.display.flip()
-        if check_game_over() and confirm_restart():
-            restart_game()
+
+        if player_side is not None and current_turn != player_side:
+            # pygame.time.wait(500)  # 稍作延迟
+            fen = convert_to_fen(pieces, current_turn)
+            ai_engine.set_position(fen)
+            ai_move = ai_engine.go(time_limit_ms=ai_think_time)
+            apply_ai_move(ai_move)
+            draw_pieces()
+            pygame.display.flip()
+            current_turn = RED if current_turn == BLACK else BLACK
+        winner = check_game_over()
+        if winner is not None:
+            if confirm_restart():
+                restart_game()
+            else:
+                pygame.quit()
+                if player_side is not None:
+                    ai_engine.quit()
+                sys.exit()
+
         event = pygame.event.wait()
 
         if event.type == pygame.QUIT:
@@ -374,6 +456,11 @@ def main_loop():
                 undo()
             elif event.key == pygame.K_l:
                 load_replay()
+            elif event.key == pygame.K_o:
+                settings = launch_control_panel()
+                print(settings)
+                SCREEN = pygame.display.set_mode((WIDTH, HEIGHT))
+
         elif event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
             gx = round((mx - OFFSET_X) / CELL_SIZE)
@@ -398,8 +485,153 @@ def main_loop():
                     selected = clicked
                     pygame.time.set_timer(BLINK_EVENT, 500)
         elif event.type == BLINK_EVENT:
-            blink = GRAY if blink==RED else RED
+            blink = GRAY if blink == RED else RED
+
+
+def select_mode():
+    font = pygame.font.SysFont("SimHei", 26)
+    SCREEN.fill(WHITE)
+    options = ["1. 人机对战（你执红）", "2. 人机对战（你执黑）", "3. 双人对战"]
+    for i, opt in enumerate(options):
+        text = font.render(opt, True, BLACK)
+        SCREEN.blit(text, (WIDTH // 2 - text.get_width() // 2, 200 + i * 40))
+    pygame.display.flip()
+
+    while True:
+        event = pygame.event.wait()
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                return RED
+            elif event.key == pygame.K_2:
+                return BLACK
+            elif event.key == pygame.K_3:
+                return None
+
+
+def convert_to_fen(pieces, turn_color):
+    board = [["0" for _ in range(9)] for _ in range(10)]
+    for p in pieces:
+        x, y = p["x"], p["y"]
+        y = 9 - y  # 适配 UCCI 坐标从上往下
+        board[y][x] = piece_to_fen_char(p)
+
+    fen_rows = []
+    for row in board:
+        count = 0
+        fen_row = ""
+        for cell in row:
+            if cell == "0":
+                count += 1
+            else:
+                if count:
+                    fen_row += str(count)
+                    count = 0
+                fen_row += cell
+        if count:
+            fen_row += str(count)
+        fen_rows.append(fen_row)
+
+    fen = "/".join(fen_rows)
+    fen += " " + ("r" if turn_color == RED else "b")
+    return fen
+
+
+def piece_to_fen_char(p):
+    table = {
+        "車": "R",
+        "馬": "N",
+        "相": "B",
+        "仕": "A",
+        "帥": "K",
+        "炮": "C",
+        "兵": "P",
+        "車": "R",
+        "馬": "N",
+        "象": "b",
+        "士": "a",
+        "將": "k",
+        "炮": "c",
+        "卒": "p",
+    }
+    ch = p["name"]
+    return (
+        table.get(ch, "?").lower()
+        if p["color"] == BLACK
+        else table.get(ch, "?").upper()
+    )
+
+
+def apply_ai_move(move_str):
+    fx = ord(move_str[0]) - ord("a")
+    fy = int(move_str[1])
+    tx = ord(move_str[2]) - ord("a")
+    ty = int(move_str[3])
+    piece = get_piece_at(fx, fy)
+    if not piece:
+        return
+    target = get_piece_at(tx, ty)
+    if target:
+        pieces.remove(target)
+        if SOUND_EAT:
+            SOUND_EAT.play()
+    else:
+        if SOUND_MOVE:
+            SOUND_MOVE.play()
+    piece["x"], piece["y"] = tx, ty
+
+
+def apply_ai_move(move_str):
+    fx = ord(move_str[0]) - ord("a")
+    fy = int(move_str[1])
+    tx = ord(move_str[2]) - ord("a")
+    ty = int(move_str[3])
+    piece = get_piece_at(fx, fy)
+    if not piece or piece["color"] == player_side:
+        return
+    target = get_piece_at(tx, ty)
+    if target:
+        if target["color"] != player_side:
+            return
+        pieces.remove(target)
+        if SOUND_EAT:
+            SOUND_EAT.play()
+    else:
+        if SOUND_MOVE:
+            SOUND_MOVE.play()
+    piece["x"], piece["y"] = tx, ty
+
+
+def select_ai_level():
+    font = pygame.font.SysFont("SimHei", 26)
+    SCREEN.fill(WHITE)
+    levels = [
+        ("1. 简单（1秒思考）", 1000),
+        ("2. 普通（3秒思考）", 3000),
+        ("3. 困难（5秒思考）", 5000),
+    ]
+    for i, (label, _) in enumerate(levels):
+        text = font.render(label, True, BLACK)
+        SCREEN.blit(text, (WIDTH // 2 - text.get_width() // 2, 200 + i * 40))
+    pygame.display.flip()
+
+    while True:
+        event = pygame.event.wait()
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+        elif event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_1:
+                return 1000
+            elif event.key == pygame.K_2:
+                return 3000
+            elif event.key == pygame.K_3:
+                return 5000
 
 
 if __name__ == "__main__":
+    player_side=None
+    restart_game()
     main_loop()

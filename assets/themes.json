@@ -1,0 +1,37 @@
+{
+    "button": {
+        "red_button": {
+            "normal_bg": "#ffcccc",
+            "hovered_bg": "#ffaaaa",
+            "selected_bg": "#ff8888",
+            "selected_text": "#000000",
+            "font": {
+                "name": "SimHei",
+                "point_size": 14,
+                "style": "regular",
+                "size": 14
+            }
+        },
+        "black_button": {
+            "normal_bg": "#cccccc",
+            "hovered_bg": "#aaaaaa",
+            "selected_bg": "#888888",
+            "selected_text": "#ffffff"
+        }
+    },
+    "font": {
+        "name": "SimHei",
+        "point_size": 14,
+        "style": "regular",
+        "size": 14
+    },
+    "defaults": {
+        "font": {
+            "name": "SimHei",
+            "point_size": 14,
+            "style": "regular",
+            "size": 14
+        },
+        "text_color": "#000000"
+    }
+}
